@@ -198,6 +198,13 @@ export class MusicEngine {
     return beat - Math.floor(beat);
   }
 
+  /** Number of whole beats since the song started (0 when stopped). */
+  beatIndex(): number {
+    if (!this.playing || !this.ctx) return 0;
+    const beat = (this.ctx.currentTime - this.startTime) / (this.stepDur * 4);
+    return Math.max(0, Math.floor(beat));
+  }
+
   /** Index of the current chord in the loop (changes once per bar). */
   barIndex(): number {
     if (!this.playing || !this.ctx) return 0;

@@ -21,15 +21,11 @@ import {
   Vector3,
 } from '@iwsdk/core';
 import { KEY_COUNT, music } from './music/engine.js';
-import { keyName, SONGS } from './music/songs.js';
+import { NowPlaying } from './now-playing.js';
 import {
-  BUTTON_DEPTH,
-  ButtonVisual,
-  buildButton,
   buildKey,
   buildKeyboardBase,
   buildSpark,
-  drawLabel,
   KEY_DEPTH,
   KEY_HEIGHT,
   KEY_PITCH,
@@ -51,8 +47,9 @@ import {
 /** Where the keyboard sits: in front of a seated player, at lap/table height. */
 const KEYBOARD_POS = new Vector3(0, 0.86, -0.42);
 const KEYBOARD_TILT = 0.2;
-const PANEL_POS = new Vector3(0, 1.1, -0.66);
-const PANEL_TILT = -0.32;
+const PANEL_POS = new Vector3(0, 1.13, -0.7);
+const PANEL_TILT = -0.3;
+const PANEL_SCALE = 0.85;
 
 const SPARKS = 28;
 const SPARK_LIFE = 1.6;
@@ -87,7 +84,7 @@ export class JamSystem extends createSystem({
   private keyHit = new Float32Array(KEY_COUNT).fill(-10);
   private keyVel = new Float32Array(KEY_COUNT);
   private keyChordTone = new Uint8Array(KEY_COUNT);
-  private buttons = new Map<number, ButtonVisual>();
+  private nowPlaying = new NowPlaying();
   private targets: PokeTarget[] = [];
   private sparks: Spark[] = [];
   private nextSpark = 0;
@@ -105,7 +102,6 @@ export class JamSystem extends createSystem({
     this.buildKeyboard();
     this.buildPanel();
     this.buildSparks();
-    this.refreshLabels();
     this.updateChordTones();
 
     this.queries.pressed.subscribe('qualify', (entity) => {
@@ -113,7 +109,7 @@ export class JamSystem extends createSystem({
     });
 
     const unsub = music.onChange(() => {
-      this.refreshLabels();
+      this.nowPlaying.refresh();
       this.updateChordTones();
     });
 
@@ -169,34 +165,23 @@ export class JamSystem extends createSystem({
   }
 
   private buildPanel(): void {
-    const panel = new Group();
-    panel.name = 'Controls';
-    panel.position.copy(PANEL_POS);
-    panel.rotation.x = PANEL_TILT;
-    const panelEntity = this.world.createTransformEntity(panel, { persistent: true });
-
-    const layout: Array<[action: number, x: number, w: number, accent: number]> = [
-      [ACTION_PREV_SONG, -0.415, 0.075, 0x7a5cff],
-      [0, -0.235, 0.26, 0x000000],
-      [ACTION_NEXT_SONG, -0.055, 0.075, 0x7a5cff],
-      [ACTION_PLAY, 0.12, 0.16, 0xff4fa0],
-      [ACTION_SOUND, 0.33, 0.2, 0x3fd0ff],
-    ];
-    const h = 0.085;
-    for (const [action, x, w, accent] of layout) {
-      const button = buildButton(w, h, accent);
-      button.frame.position.x = x;
+    const np = this.nowPlaying;
+    np.root.position.copy(PANEL_POS);
+    np.root.rotation.x = PANEL_TILT;
+    np.root.scale.setScalar(PANEL_SCALE);
+    const panelEntity = this.world.createTransformEntity(np.root, { persistent: true });
+    for (const button of np.buttons) {
+      // Re-parent each button under its own entity so it can be pressed.
+      np.root.remove(button.frame);
       const entity = this.world.createTransformEntity(button.frame, panelEntity);
-      this.buttons.set(action, button);
-      if (action === 0) continue; // the song display isn't pressable
-      entity.addComponent(Touchable, { kind: TOUCH_BUTTON, value: action });
+      entity.addComponent(Touchable, { kind: TOUCH_BUTTON, value: button.action });
       entity.addComponent(RayInteractable);
       this.targets.push({
         entity,
         frame: button.frame,
-        hx: w / 2,
-        hy: h / 2,
-        hz: BUTTON_DEPTH / 2,
+        hx: button.hx,
+        hy: button.hy,
+        hz: button.hz,
         axis: 'z',
         inside: [false, false],
         lastFire: -10,
@@ -213,23 +198,6 @@ export class JamSystem extends createSystem({
       this.sparks.push({ mesh, vel: new Vector3(), age: SPARK_LIFE });
     }
     this.world.createTransformEntity(holder, { persistent: true });
-  }
-
-  private refreshLabels(): void {
-    const song = music.song;
-    const label = (action: number, title: string, sub = '', color?: string): void => {
-      const b = this.buttons.get(action);
-      if (b) drawLabel(b, title, sub, color);
-    };
-    label(ACTION_PREV_SONG, '‹');
-    label(ACTION_NEXT_SONG, '›');
-    label(
-      0,
-      song.name,
-      `${song.vibe} · ${keyName(song)} · ${music.songIndex + 1}/${SONGS.length}`,
-    );
-    label(ACTION_PLAY, music.playing ? '■ Stop' : '▶ Play', '', music.playing ? '#ffd1e6' : '#ffffff');
-    label(ACTION_SOUND, music.sound, 'tap to change sound');
   }
 
   private updateChordTones(): void {
@@ -270,8 +238,7 @@ export class JamSystem extends createSystem({
         music.nextSound();
         break;
     }
-    const b = this.buttons.get(value);
-    if (b) b.face.position.z = -0.008;
+    this.nowPlaying.press(value);
   }
 
   private playKey(index: number, velocity: number): void {
@@ -326,10 +293,7 @@ export class JamSystem extends createSystem({
         0.22 + this.keyChordTone[i] * (0.18 + 0.25 * pulse) + hover + hit * (1.5 + this.keyVel[i] * 2);
     }
 
-    // Buttons spring back after a press.
-    this.buttons.forEach((b) => {
-      b.face.position.z *= 0.8;
-    });
+    this.nowPlaying.animate(delta, this.isButtonHovered);
 
     // Sparks fly from the key toward the band.
     for (let i = 0; i < SPARKS; i++) {
@@ -344,10 +308,10 @@ export class JamSystem extends createSystem({
     }
   }
 
-  private isHovered(index: number): boolean {
+  private isHovered(index: number, kind = TOUCH_KEY): boolean {
     for (const e of this.queries.hovered.entities) {
       if (
-        e.getValue(Touchable, 'kind') === TOUCH_KEY &&
+        e.getValue(Touchable, 'kind') === kind &&
         e.getValue(Touchable, 'value') === index
       ) {
         return true;
@@ -355,6 +319,9 @@ export class JamSystem extends createSystem({
     }
     return false;
   }
+
+  private isButtonHovered = (action: number): boolean =>
+    this.isHovered(action, TOUCH_BUTTON);
 
   /**
    * Fingertip poke detection. Each target is tested in its own local space so

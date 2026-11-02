@@ -7,7 +7,6 @@
 import {
   AdditiveBlending,
   BoxGeometry,
-  CanvasTexture,
   CapsuleGeometry,
   CircleGeometry,
   Color,
@@ -22,7 +21,6 @@ import {
   PlaneGeometry,
   RingGeometry,
   SphereGeometry,
-  SRGBColorSpace,
 } from '@iwsdk/core';
 
 // ---------------------------------------------------------------- materials
@@ -285,74 +283,6 @@ export function buildKey(index: number, count: number): KeyVisual {
   const cap = new Mesh(new BoxGeometry(KEY_WIDTH, KEY_HEIGHT, KEY_DEPTH), mat);
   frame.add(cap);
   return { frame, cap, color };
-}
-
-// ---------------------------------------------------------------- buttons
-
-export interface ButtonVisual {
-  frame: Group;
-  face: Mesh<BoxGeometry, MeshStandardMaterial>;
-  canvas: HTMLCanvasElement;
-  texture: CanvasTexture;
-  width: number;
-  height: number;
-}
-
-export const BUTTON_DEPTH = 0.02;
-
-export function buildButton(width: number, height: number, accent: number): ButtonVisual {
-  const frame = new Group();
-  const face = new Mesh(
-    new BoxGeometry(width, height, BUTTON_DEPTH),
-    new MeshStandardMaterial({
-      color: 0x1b1525,
-      roughness: 0.5,
-      emissive: accent,
-      emissiveIntensity: 0.18,
-    }),
-  );
-  frame.add(face);
-
-  const canvas = document.createElement('canvas');
-  canvas.width = Math.round(512 * (width / height) * 0.25) * 4;
-  canvas.height = 128;
-  const texture = new CanvasTexture(canvas);
-  texture.colorSpace = SRGBColorSpace;
-  texture.anisotropy = 4;
-  const label = new Mesh(
-    new PlaneGeometry(width * 0.94, height * 0.9),
-    new MeshBasicMaterial({ map: texture, transparent: true, toneMapped: false }),
-  );
-  label.position.z = BUTTON_DEPTH / 2 + 0.001;
-  frame.add(label);
-  return { frame, face, canvas, texture, width, height };
-}
-
-export function drawLabel(
-  button: ButtonVisual,
-  title: string,
-  subtitle = '',
-  color = '#ffffff',
-): void {
-  const ctx = button.canvas.getContext('2d');
-  if (!ctx) return;
-  const { width: w, height: h } = button.canvas;
-  ctx.clearRect(0, 0, w, h);
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.fillStyle = color;
-  if (subtitle) {
-    ctx.font = '600 62px system-ui, sans-serif';
-    ctx.fillText(title, w / 2, h * 0.36, w * 0.94);
-    ctx.fillStyle = 'rgba(255,255,255,0.65)';
-    ctx.font = '500 40px system-ui, sans-serif';
-    ctx.fillText(subtitle, w / 2, h * 0.76, w * 0.94);
-  } else {
-    const big = title.length <= 2;
-    ctx.font = big ? '700 110px system-ui, sans-serif' : '600 64px system-ui, sans-serif';
-    ctx.fillText(title, w / 2, h / 2 + (big ? -6 : 2), w * 0.94);
-  }
-  button.texture.needsUpdate = true;
 }
 
 // ---------------------------------------------------------------- particles

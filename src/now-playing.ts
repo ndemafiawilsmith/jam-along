@@ -26,10 +26,11 @@ import {
   ACTION_NEXT_SONG,
   ACTION_PLAY,
   ACTION_PREV_SONG,
+  ACTION_INSTRUMENT,
   ACTION_SOUND,
 } from './touchable-component.js';
 
-export type Icon = 'play' | 'pause' | 'prev' | 'next' | 'sound';
+export type Icon = 'play' | 'pause' | 'prev' | 'next' | 'sound' | 'keys' | 'drums';
 
 export interface ConsoleButton {
   action: number;
@@ -53,6 +54,7 @@ const DEPTH = 0.02;
 const PINK = 0xff4fa0;
 const VIOLET = 0x7a5cff;
 const CYAN = 0x3fd0ff;
+const AMBER = 0xffa23f;
 
 function makeCanvas(w: number, h: number): [HTMLCanvasElement, CanvasTexture] {
   const canvas = document.createElement('canvas');
@@ -136,7 +138,9 @@ export class NowPlaying {
     this.addButton(ACTION_PREV_SONG, 'box', cx - 0.13, 0.04, 0.085, 0.085, VIOLET, 0.35);
     this.playButton = this.addButton(ACTION_PLAY, 'disc', cx, 0.04, 0.13, 0.13, PINK, 0.55);
     this.addButton(ACTION_NEXT_SONG, 'box', cx + 0.13, 0.04, 0.085, 0.085, VIOLET, 0.35);
-    this.addButton(ACTION_SOUND, 'box', cx, -0.085, 0.345, 0.062, CYAN, 0.35);
+    // Bottom row: instrument switch (keys <-> drums) and sound / kit picker.
+    this.addButton(ACTION_INSTRUMENT, 'box', cx - 0.0885, -0.085, 0.168, 0.062, AMBER, 0.4);
+    this.addButton(ACTION_SOUND, 'box', cx + 0.0885, -0.085, 0.168, 0.062, CYAN, 0.35);
 
     this.refresh();
   }
@@ -233,26 +237,42 @@ export class NowPlaying {
         ctx.stroke();
         break;
       }
-      case 'sound': {
-        // Small "music note" on the left, then the sound name.
-        const nx = h * 0.42;
-        ctx.beginPath();
-        ctx.ellipse(nx, cy + h * 0.14, h * 0.1, h * 0.075, -0.4, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.lineWidth = h * 0.045;
-        ctx.beginPath();
-        ctx.moveTo(nx + h * 0.085, cy + h * 0.12);
-        ctx.lineTo(nx + h * 0.085, cy - h * 0.24);
-        ctx.lineTo(nx + h * 0.24, cy - h * 0.16);
-        ctx.stroke();
+      case 'sound':
+      case 'keys':
+      case 'drums': {
+        // Small glyph on the left, then the label.
+        const gx = h * 0.4;
+        if (icon === 'sound') {
+          ctx.beginPath();
+          ctx.ellipse(gx - h * 0.04, cy + h * 0.14, h * 0.1, h * 0.075, -0.4, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.lineWidth = h * 0.045;
+          ctx.beginPath();
+          ctx.moveTo(gx + h * 0.045, cy + h * 0.12);
+          ctx.lineTo(gx + h * 0.045, cy - h * 0.24);
+          ctx.lineTo(gx + h * 0.2, cy - h * 0.16);
+          ctx.stroke();
+        } else if (icon === 'keys') {
+          for (let i = 0; i < 3; i++) {
+            ctx.beginPath();
+            ctx.roundRect(gx - h * 0.2 + i * h * 0.14, cy - h * 0.2, h * 0.11, h * 0.4, h * 0.03);
+            ctx.fill();
+          }
+        } else {
+          ctx.beginPath();
+          ctx.ellipse(gx, cy - h * 0.08, h * 0.2, h * 0.08, 0, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.fillRect(gx - h * 0.2, cy - h * 0.08, h * 0.4, h * 0.22);
+          ctx.lineWidth = h * 0.04;
+          ctx.beginPath();
+          ctx.moveTo(gx - h * 0.05, cy - h * 0.18);
+          ctx.lineTo(gx + h * 0.22, cy - h * 0.34);
+          ctx.stroke();
+        }
         ctx.textBaseline = 'middle';
         ctx.textAlign = 'left';
-        ctx.font = `700 ${Math.round(h * 0.44)}px system-ui, sans-serif`;
-        ctx.fillText(text, h * 0.8, cy + h * 0.02);
-        ctx.textAlign = 'right';
-        ctx.fillStyle = 'rgba(255,255,255,0.9)';
-        ctx.font = `500 ${Math.round(h * 0.3)}px system-ui, sans-serif`;
-        ctx.fillText('change ›', w - h * 0.3, cy + h * 0.02);
+        ctx.font = `700 ${Math.round(h * 0.38)}px system-ui, sans-serif`;
+        ctx.fillText(text, h * 0.72, cy + h * 0.02, w - h * 0.8);
         break;
       }
     }
@@ -342,7 +362,15 @@ export class NowPlaying {
           this.drawIcon(b, music.playing ? 'pause' : 'play');
           break;
         case ACTION_SOUND:
-          this.drawIcon(b, 'sound', `Sound: ${music.sound}`);
+          this.drawIcon(
+            b,
+            'sound',
+            music.instrument === 'Drums' ? `Kit: ${music.kit}` : `Sound: ${music.sound}`,
+          );
+          break;
+        case ACTION_INSTRUMENT:
+          // Shows what you're playing now; tap to switch.
+          this.drawIcon(b, music.instrument === 'Drums' ? 'drums' : 'keys', music.instrument);
           break;
       }
     }

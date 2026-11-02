@@ -15,7 +15,7 @@
     <div class="eyebrow">JAM ALONG</div>
     <div class="heading">Play with the band</div>
     <div class="body">1. Press Play to start a song.</div>
-    <div class="body">2. Tap the glowing keys with your fingers.</div>
+    <div class="body">2. Tap the keys, or switch to Drums.</div>
     <div class="body">Every key fits the song, so just play.</div>
   </div>
   <Button id="xr-button" class="button">

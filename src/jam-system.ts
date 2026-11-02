@@ -5,6 +5,9 @@
  * - Real hands: poke a key with an index fingertip (speed sets loudness).
  * - Hands in the emulator / controllers: point and pinch (or trigger).
  * - Desktop browser: click, or use the computer keyboard (A S D F ...).
+ *
+ * Two instruments share the same spot in front of the player: the keyboard
+ * and a set of drum pads. Only the active one is shown and pressable.
  */
 
 import {
@@ -12,7 +15,9 @@ import {
   Entity,
   Group,
   Hovered,
+  Color,
   Matrix4,
+  Object3D,
   Mesh,
   MeshBasicMaterial,
   Pressed,
@@ -20,27 +25,33 @@ import {
   SphereGeometry,
   Vector3,
 } from '@iwsdk/core';
-import { KEY_COUNT, music } from './music/engine.js';
+import { KEY_COUNT, music, PADS } from './music/engine.js';
 import { NowPlaying } from './now-playing.js';
 import {
   buildKey,
   buildKeyboardBase,
+  buildPad,
+  buildPadBase,
   buildSpark,
   KEY_DEPTH,
   KEY_HEIGHT,
   KEY_PITCH,
   KEY_WIDTH,
   KeyVisual,
+  PAD_HEIGHT,
+  PadVisual,
   STAGE_TOP,
   STAGE_Z,
 } from './stage.js';
 import {
+  ACTION_INSTRUMENT,
   ACTION_NEXT_SONG,
   ACTION_PLAY,
   ACTION_PREV_SONG,
   ACTION_SOUND,
   TOUCH_BUTTON,
   TOUCH_KEY,
+  TOUCH_PAD,
   Touchable,
 } from './touchable-component.js';
 
@@ -57,8 +68,15 @@ const RETRIGGER = 0.09; // seconds before the same key can fire again
 
 const COMPUTER_KEYS = ['a', 's', 'd', 'f', 'g', 'h', 'j', 'k', 'l', ';', "'"];
 
+/** Drum pad sizes (radius, metres), in the same order as PADS. */
+const PAD_RADII = [0.05, 0.058, 0.068, 0.052, 0.056, 0.06];
+const PAD_GAP = 0.022;
+
+type TargetGroup = 'keys' | 'pads' | 'ui';
+
 interface PokeTarget {
   entity: Entity;
+  group: TargetGroup;
   frame: Group;
   /** Half sizes of the touch volume in the frame's local space. */
   hx: number;
@@ -84,6 +102,12 @@ export class JamSystem extends createSystem({
   private keyHit = new Float32Array(KEY_COUNT).fill(-10);
   private keyVel = new Float32Array(KEY_COUNT);
   private keyChordTone = new Uint8Array(KEY_COUNT);
+  private pads: PadVisual[] = [];
+  private padHit = new Float32Array(PADS.length).fill(-10);
+  private padVel = new Float32Array(PADS.length);
+  private keyboardRoot!: Object3D;
+  private padRoot!: Object3D;
+  private activeGroup: TargetGroup = 'keys';
   private nowPlaying = new NowPlaying();
   private targets: PokeTarget[] = [];
   private sparks: Spark[] = [];
@@ -100,9 +124,11 @@ export class JamSystem extends createSystem({
 
   init(): void {
     this.buildKeyboard();
+    this.buildPads();
     this.buildPanel();
     this.buildSparks();
     this.updateChordTones();
+    this.applyInstrument();
 
     this.queries.pressed.subscribe('qualify', (entity) => {
       this.fire(entity, 0.8);
@@ -111,13 +137,20 @@ export class JamSystem extends createSystem({
     const unsub = music.onChange(() => {
       this.nowPlaying.refresh();
       this.updateChordTones();
+      this.applyInstrument();
     });
 
     const onKey = (e: KeyboardEvent): void => {
       if (e.repeat) return;
       const k = e.key.toLowerCase();
       const idx = COMPUTER_KEYS.indexOf(k);
-      if (idx >= 0) this.playKey(idx, 0.85);
+      if (idx >= 0) {
+        if (music.instrument === 'Drums') {
+          if (idx < PADS.length) this.playPad(idx, 0.85);
+        } else {
+          this.playKey(idx, 0.85);
+        }
+      } else if (k === 'i') music.toggleInstrument();
       else if (k === ' ') {
         e.preventDefault();
         music.togglePlay();
@@ -143,6 +176,7 @@ export class JamSystem extends createSystem({
     base.position.copy(KEYBOARD_POS);
     base.rotation.x = KEYBOARD_TILT;
     const keyboard = this.world.createTransformEntity(base, { persistent: true });
+    this.keyboardRoot = base;
 
     for (let i = 0; i < KEY_COUNT; i++) {
       const key = buildKey(i, KEY_COUNT);
@@ -153,6 +187,7 @@ export class JamSystem extends createSystem({
       this.keys.push(key);
       this.targets.push({
         entity,
+        group: 'keys',
         frame: key.frame,
         hx: KEY_WIDTH / 2 + 0.002,
         hy: KEY_HEIGHT / 2,
@@ -161,6 +196,57 @@ export class JamSystem extends createSystem({
         inside: [false, false],
         lastFire: -10,
       });
+    }
+  }
+
+  private buildPads(): void {
+    let total = PAD_GAP * (PADS.length - 1);
+    for (const r of PAD_RADII) total += r * 2;
+    const base = buildPadBase(total + 0.06, 0.24);
+    base.position.copy(KEYBOARD_POS);
+    base.rotation.x = KEYBOARD_TILT;
+    const padRig = this.world.createTransformEntity(base, { persistent: true });
+    this.padRoot = base;
+
+    let x = -total / 2;
+    for (let i = 0; i < PADS.length; i++) {
+      const r = PAD_RADII[i];
+      x += r;
+      const hue = 0.92 - (i / (PADS.length - 1)) * 0.62;
+      const pad = buildPad(PADS[i], r, hue);
+      // A gentle arc: outer pads sit a little further away, like a real kit.
+      pad.frame.position.set(x, 0, -x * x * 0.32 + 0.01);
+      x += r + PAD_GAP;
+      const entity = this.world.createTransformEntity(pad.frame, padRig);
+      entity.addComponent(Touchable, { kind: TOUCH_PAD, value: i });
+      this.pads.push(pad);
+      this.targets.push({
+        entity,
+        group: 'pads',
+        frame: pad.frame,
+        hx: r * 0.95,
+        hy: PAD_HEIGHT / 2,
+        hz: r * 0.95,
+        axis: 'y',
+        inside: [false, false],
+        lastFire: -10,
+      });
+    }
+  }
+
+  /** Show the active instrument and make only its parts pressable. */
+  private applyInstrument(): void {
+    const group: TargetGroup = music.instrument === 'Drums' ? 'pads' : 'keys';
+    this.activeGroup = group;
+    this.keyboardRoot.visible = group === 'keys';
+    this.padRoot.visible = group === 'pads';
+    for (const target of this.targets) {
+      if (target.group === 'ui') continue;
+      const active = target.group === group;
+      const has = target.entity.hasComponent(RayInteractable);
+      if (active && !has) target.entity.addComponent(RayInteractable);
+      if (!active && has) target.entity.removeComponent(RayInteractable);
+      if (!active) target.inside[0] = target.inside[1] = false;
     }
   }
 
@@ -178,6 +264,7 @@ export class JamSystem extends createSystem({
       entity.addComponent(RayInteractable);
       this.targets.push({
         entity,
+        group: 'ui',
         frame: button.frame,
         hx: button.hx,
         hy: button.hy,
@@ -224,6 +311,10 @@ export class JamSystem extends createSystem({
       this.playKey(value, velocity);
       return;
     }
+    if (kind === TOUCH_PAD) {
+      this.playPad(value, velocity);
+      return;
+    }
     switch (value) {
       case ACTION_PREV_SONG:
         music.prevSong();
@@ -237,6 +328,9 @@ export class JamSystem extends createSystem({
       case ACTION_SOUND:
         music.nextSound();
         break;
+      case ACTION_INSTRUMENT:
+        music.toggleInstrument();
+        break;
     }
     this.nowPlaying.press(value);
   }
@@ -245,14 +339,22 @@ export class JamSystem extends createSystem({
     if (!music.playKey(index, velocity)) return;
     this.keyHit[index] = this.elapsed;
     this.keyVel[index] = velocity;
-    this.emitSpark(index, velocity);
+    const key = this.keys[index];
+    this.emitSpark(key.frame, key.color, velocity);
   }
 
-  private emitSpark(index: number, velocity: number): void {
+  private playPad(index: number, velocity: number): void {
+    if (!music.playPad(index, velocity)) return;
+    this.padHit[index] = this.elapsed;
+    this.padVel[index] = velocity;
+    const pad = this.pads[index];
+    this.emitSpark(pad.frame, pad.color, velocity);
+  }
+
+  private emitSpark(from: Object3D, color: Color, velocity: number): void {
     const spark = this.sparks[this.nextSpark];
     this.nextSpark = (this.nextSpark + 1) % SPARKS;
-    const key = this.keys[index];
-    key.frame.getWorldPosition(spark.mesh.position);
+    from.getWorldPosition(spark.mesh.position);
     spark.mesh.position.y += 0.03;
     spark.vel
       .subVectors(this.stageTarget, spark.mesh.position)
@@ -260,7 +362,7 @@ export class JamSystem extends createSystem({
       .multiplyScalar(1.6 + velocity * 1.6);
     spark.vel.x += (Math.random() - 0.5) * 0.6;
     spark.vel.y += 0.9 + Math.random() * 0.5;
-    spark.mesh.material.color.copy(key.color);
+    spark.mesh.material.color.copy(color);
     spark.mesh.scale.setScalar(0.8 + velocity * 1.4);
     spark.mesh.visible = true;
     spark.age = 0;
@@ -291,6 +393,25 @@ export class JamSystem extends createSystem({
       const hover = this.isHovered(i) ? 0.35 : 0;
       key.cap.material.emissiveIntensity =
         0.22 + this.keyChordTone[i] * (0.18 + 0.25 * pulse) + hover + hit * (1.5 + this.keyVel[i] * 2);
+    }
+
+    // Drum pads: the head dips, flashes, and sends out a ripple ring.
+    for (let i = 0; i < this.pads.length; i++) {
+      const pad = this.pads[i];
+      const since = t - this.padHit[i];
+      const hit = since < 1.2 ? Math.exp(-since * 10) : 0;
+      const v = this.padVel[i];
+      pad.cap.position.y = -0.01 * Math.min(1, hit * 1.6);
+      pad.cap.scale.set(1 + hit * 0.04, 1, 1 + hit * 0.04);
+      const hover = this.isHovered(i, TOUCH_PAD) ? 0.35 : 0;
+      pad.cap.material.emissiveIntensity = 0.3 + hover + hit * (1.6 + v * 2.2);
+      if (since < 0.6) {
+        const k = since / 0.6;
+        pad.ripple.scale.setScalar(1 + k * (0.8 + v * 0.8));
+        pad.ripple.material.opacity = (1 - k) * (0.6 + v * 0.4);
+      } else {
+        pad.ripple.material.opacity = 0;
+      }
     }
 
     this.nowPlaying.animate(delta, this.isButtonHovered);
@@ -338,6 +459,7 @@ export class JamSystem extends createSystem({
     }
 
     for (const target of this.targets) {
+      if (target.group !== 'ui' && target.group !== this.activeGroup) continue;
       target.frame.updateWorldMatrix(true, false);
       this.tmpInv.copy(target.frame.matrixWorld).invert();
       for (let h = 0; h < 2; h++) {

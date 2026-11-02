@@ -12,6 +12,14 @@ export type HitType = 'kick' | 'snare' | 'hat' | 'bass' | 'chord' | 'player';
 export type Sound = 'Keys' | 'Synth' | 'Bells';
 export const SOUNDS: Sound[] = ['Keys', 'Synth', 'Bells'];
 
+export type Instrument = 'Keys' | 'Drums';
+export type Kit = 'Studio' | '808';
+export const KITS: Kit[] = ['Studio', '808'];
+
+/** The player's drum pads, left to right. */
+export const PADS = ['Hi-hat', 'Snare', 'Kick', 'Clap', 'Tom', 'Crash'] as const;
+export type Pad = (typeof PADS)[number];
+
 export const KEY_COUNT = 11;
 
 const HIT_TYPES: HitType[] = ['kick', 'snare', 'hat', 'bass', 'chord', 'player'];
@@ -48,6 +56,8 @@ export class MusicEngine {
 
   songIndex = 0;
   soundIndex = 0;
+  kitIndex = 0;
+  instrument: Instrument = 'Keys';
   playing = false;
 
   private master!: GainNode;
@@ -73,6 +83,10 @@ export class MusicEngine {
 
   get sound(): Sound {
     return SOUNDS[this.soundIndex];
+  }
+
+  get kit(): Kit {
+    return KITS[this.kitIndex];
   }
 
   get now(): number {
@@ -181,8 +195,19 @@ export class MusicEngine {
     this.setSong(this.songIndex - 1);
   }
 
+  /** Cycle the keyboard sound, or the drum kit when playing drums. */
   nextSound(): void {
-    this.soundIndex = (this.soundIndex + 1) % SOUNDS.length;
+    if (this.instrument === 'Drums') {
+      this.kitIndex = (this.kitIndex + 1) % KITS.length;
+    } else {
+      this.soundIndex = (this.soundIndex + 1) % SOUNDS.length;
+    }
+    this.emit();
+  }
+
+  /** Switch between keyboard and drum pads. */
+  toggleInstrument(): void {
+    this.instrument = this.instrument === 'Keys' ? 'Drums' : 'Keys';
     this.emit();
   }
 
@@ -239,11 +264,19 @@ export class MusicEngine {
     const bar = Math.floor(step / 16) % song.chords.length;
     const chord = song.chords[bar];
 
-    if (song.kick.includes(s)) this.kick(t);
-    if (song.snare.includes(s)) this.snare(t);
-    if (song.clap.includes(s)) this.clap(t);
-    if (song.rim.includes(s)) this.rim(t);
-    if (song.hat.includes(s)) this.hat(t, s % 4 === 2 ? 0.22 : 0.12);
+    // In drums mode the player IS the drummer: the band drops its kick,
+    // snare and percussion and keeps only quiet hi-hats as a time guide.
+    const playerDrums = this.instrument === 'Drums';
+    if (!playerDrums) {
+      if (song.kick.includes(s)) this.kick(t, this.bandBus);
+      if (song.snare.includes(s)) this.snare(t, this.bandBus);
+      if (song.clap.includes(s)) this.clap(t, this.bandBus);
+      if (song.rim.includes(s)) this.rim(t);
+    }
+    if (song.hat.includes(s)) {
+      const accent = s % 4 === 2 ? 0.22 : 0.12;
+      this.hat(t, this.bandBus, playerDrums ? accent * 0.55 : accent);
+    }
 
     for (const [bs, interval] of song.bass) {
       if (bs === s) {
@@ -266,15 +299,20 @@ export class MusicEngine {
     return g;
   }
 
-  private kick(t: number): void {
+  private kick(t: number, out: AudioNode, kit: Kit = 'Studio', gain = 1): void {
     const ctx = this.ctx!;
+    const boom = kit === '808';
     const o = ctx.createOscillator();
-    o.frequency.setValueAtTime(140, t);
-    o.frequency.exponentialRampToValueAtTime(42, t + 0.14);
-    const g = this.env(t, 1, 0.003, 0.32);
-    o.connect(g).connect(this.bandBus);
+    o.frequency.setValueAtTime(boom ? 120 : 140, t);
+    o.frequency.exponentialRampToValueAtTime(boom ? 38 : 42, t + (boom ? 0.22 : 0.14));
+    const g = this.env(t, gain, 0.003, boom ? 0.75 : 0.32);
+    o.connect(g).connect(out);
     o.start(t);
-    o.stop(t + 0.4);
+    o.stop(t + (boom ? 0.85 : 0.4));
+    if (!boom) {
+      // A short click gives the acoustic kick its beater attack.
+      this.noiseHit(t, 'lowpass', 2500, 0.25 * gain, 0.012, out);
+    }
     this.logs.get('kick')!.push(t);
   }
 
@@ -284,6 +322,7 @@ export class MusicEngine {
     freq: number,
     peak: number,
     decay: number,
+    out: AudioNode,
     toReverb = false,
   ): void {
     const ctx = this.ctx!;
@@ -293,29 +332,30 @@ export class MusicEngine {
     f.type = type;
     f.frequency.value = freq;
     const g = this.env(t, peak, 0.002, decay);
-    src.connect(f).connect(g).connect(this.bandBus);
+    src.connect(f).connect(g).connect(out);
     if (toReverb) g.connect(this.reverb);
     src.start(t, Math.random() * 0.5);
     src.stop(t + decay + 0.05);
   }
 
-  private snare(t: number): void {
-    this.noiseHit(t, 'bandpass', 1800, 0.55, 0.18, true);
+  private snare(t: number, out: AudioNode, kit: Kit = 'Studio', gain = 1): void {
+    const tight = kit === '808';
+    this.noiseHit(t, tight ? 'highpass' : 'bandpass', tight ? 2400 : 1800, 0.55 * gain, tight ? 0.14 : 0.18, out, true);
     const ctx = this.ctx!;
     const o = ctx.createOscillator();
     o.type = 'triangle';
-    o.frequency.setValueAtTime(220, t);
-    o.frequency.exponentialRampToValueAtTime(140, t + 0.08);
-    const g = this.env(t, 0.35, 0.002, 0.1);
-    o.connect(g).connect(this.bandBus);
+    o.frequency.setValueAtTime(tight ? 260 : 220, t);
+    o.frequency.exponentialRampToValueAtTime(tight ? 180 : 140, t + 0.08);
+    const g = this.env(t, 0.35 * gain, 0.002, 0.1);
+    o.connect(g).connect(out);
     o.start(t);
     o.stop(t + 0.15);
     this.logs.get('snare')!.push(t);
   }
 
-  private clap(t: number): void {
+  private clap(t: number, out: AudioNode, gain = 1): void {
     for (let i = 0; i < 3; i++) {
-      this.noiseHit(t + i * 0.011, 'bandpass', 1200, 0.4, 0.06 + i * 0.04, i === 2);
+      this.noiseHit(t + i * 0.011, 'bandpass', 1200, 0.4 * gain, 0.06 + i * 0.04, out, i === 2);
     }
     this.logs.get('snare')!.push(t);
   }
@@ -334,9 +374,63 @@ export class MusicEngine {
     o.stop(t + 0.06);
   }
 
-  private hat(t: number, peak: number): void {
-    this.noiseHit(t, 'highpass', 8000, peak, 0.045);
+  private hat(t: number, out: AudioNode, peak: number, kit: Kit = 'Studio'): void {
+    this.noiseHit(t, 'highpass', kit === '808' ? 9500 : 8000, peak, kit === '808' ? 0.03 : 0.045, out);
     this.logs.get('hat')!.push(t);
+  }
+
+  private tom(t: number, out: AudioNode, kit: Kit, gain: number): void {
+    const ctx = this.ctx!;
+    const o = ctx.createOscillator();
+    const base = kit === '808' ? 110 : 150;
+    o.frequency.setValueAtTime(base * 1.6, t);
+    o.frequency.exponentialRampToValueAtTime(base, t + 0.12);
+    const g = this.env(t, 0.6 * gain, 0.003, kit === '808' ? 0.5 : 0.3);
+    o.connect(g).connect(out);
+    g.connect(this.reverb);
+    o.start(t);
+    o.stop(t + 0.6);
+    this.logs.get('snare')!.push(t);
+  }
+
+  private crash(t: number, out: AudioNode, kit: Kit, gain: number): void {
+    const long = kit === 'Studio' ? 1.6 : 0.9;
+    this.noiseHit(t, 'highpass', 5000, 0.35 * gain, long, out, true);
+    this.noiseHit(t, 'bandpass', 9000, 0.2 * gain, long * 0.6, out);
+    this.logs.get('hat')!.push(t);
+  }
+
+  /** Play drum pad `index` right now. Returns false if audio is locked. */
+  playPad(index: number, velocity = 1): boolean {
+    this.unlock();
+    const ctx = this.ctx;
+    if (!ctx) return false;
+    const t = ctx.currentTime + 0.005;
+    const v = 0.35 + 0.65 * Math.max(0, Math.min(1, velocity));
+    const out = this.playerBus;
+    const kit = this.kit;
+    switch (PADS[index]) {
+      case 'Hi-hat':
+        this.hat(t, out, 0.32 * v, kit);
+        break;
+      case 'Snare':
+        this.snare(t, out, kit, v);
+        break;
+      case 'Kick':
+        this.kick(t, out, kit, v);
+        break;
+      case 'Clap':
+        this.clap(t, out, v);
+        break;
+      case 'Tom':
+        this.tom(t, out, kit, v);
+        break;
+      case 'Crash':
+        this.crash(t, out, kit, v);
+        break;
+    }
+    this.logs.get('player')!.push(t);
+    return true;
   }
 
   private bass(t: number, midi: number, dur: number): void {

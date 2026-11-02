@@ -7,6 +7,7 @@
 import {
   AdditiveBlending,
   BoxGeometry,
+  CanvasTexture,
   CapsuleGeometry,
   CircleGeometry,
   Color,
@@ -21,6 +22,7 @@ import {
   PlaneGeometry,
   RingGeometry,
   SphereGeometry,
+  SRGBColorSpace,
 } from '@iwsdk/core';
 
 // ---------------------------------------------------------------- materials
@@ -283,6 +285,91 @@ export function buildKey(index: number, count: number): KeyVisual {
   const cap = new Mesh(new BoxGeometry(KEY_WIDTH, KEY_HEIGHT, KEY_DEPTH), mat);
   frame.add(cap);
   return { frame, cap, color };
+}
+
+// ---------------------------------------------------------------- drum pads
+
+export const PAD_HEIGHT = 0.026;
+
+export interface PadVisual {
+  /** Static frame used for touch tests. */
+  frame: Group;
+  /** The moving drum head. */
+  cap: Mesh<CylinderGeometry, MeshStandardMaterial>;
+  /** Glow ring that ripples outward on each hit. */
+  ripple: Mesh<RingGeometry, MeshBasicMaterial>;
+  color: Color;
+  radius: number;
+}
+
+export function buildPadBase(width: number, depth: number): Group {
+  const g = new Group();
+  g.name = 'Drum Pads';
+  const base = new Mesh(new BoxGeometry(width, 0.035, depth), solid(0x15101d));
+  base.position.set(0, -0.03, -0.01);
+  g.add(base);
+  const edge = new Mesh(new BoxGeometry(width, 0.006, 0.006), glowMaterial(0xff4fa0, 0.9));
+  edge.position.set(0, -0.012, depth / 2 - 0.006);
+  g.add(edge);
+  return g;
+}
+
+export function buildPad(name: string, radius: number, hue: number): PadVisual {
+  const frame = new Group();
+  const color = new Color().setHSL(hue, 0.85, 0.58);
+
+  const rim = new Mesh(
+    new CylinderGeometry(radius + 0.008, radius + 0.008, PAD_HEIGHT * 0.8, 40),
+    solid(0x241b31, color.getHex(), 0.15),
+  );
+  rim.position.y = -PAD_HEIGHT * 0.25;
+  frame.add(rim);
+
+  const cap = new Mesh(
+    new CylinderGeometry(radius, radius, PAD_HEIGHT, 40),
+    new MeshStandardMaterial({
+      color: new Color().setHSL(hue, 0.35, 0.2),
+      roughness: 0.45,
+      emissive: color,
+      emissiveIntensity: 0.3,
+    }),
+  );
+  frame.add(cap);
+
+  // Name printed on the drum head.
+  const canvas = document.createElement('canvas');
+  canvas.width = 256;
+  canvas.height = 256;
+  const ctx = canvas.getContext('2d');
+  if (ctx) {
+    ctx.strokeStyle = 'rgba(255,255,255,0.35)';
+    ctx.lineWidth = 6;
+    ctx.beginPath();
+    ctx.arc(128, 128, 112, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.fillStyle = '#ffffff';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.font = '800 54px system-ui, sans-serif';
+    ctx.fillText(name.toUpperCase(), 128, 132, 210);
+  }
+  const texture = new CanvasTexture(canvas);
+  texture.colorSpace = SRGBColorSpace;
+  texture.anisotropy = 8;
+  const label = new Mesh(
+    new CircleGeometry(radius * 0.95, 40),
+    new MeshBasicMaterial({ map: texture, transparent: true, toneMapped: false, depthWrite: false }),
+  );
+  label.rotation.x = -Math.PI / 2;
+  label.position.y = PAD_HEIGHT / 2 + 0.001;
+  cap.add(label);
+
+  const ripple = new Mesh(new RingGeometry(radius * 0.92, radius, 48), glowMaterial(color, 0));
+  ripple.rotation.x = -Math.PI / 2;
+  ripple.position.y = PAD_HEIGHT / 2 + 0.002;
+  frame.add(ripple);
+
+  return { frame, cap, ripple, color, radius };
 }
 
 // ---------------------------------------------------------------- particles

@@ -24,7 +24,11 @@ Click **Enter VR** on the panel, then switch the emulator to **hands** mode.
 | Emulator / controllers | Point at a key and pinch (or pull the trigger) |
 | Desktop browser | Click keys, or use the keyboard: `A S D F G H J K L ; '` |
 
-Desktop shortcuts: `Space` play/stop, `N` / `B` next/previous song, `M` change sound.
+Desktop shortcuts: `Space` play/stop, `N` / `B` next/previous song, `M` change sound or drum kit, `I` switch between keys and drums (drum pads use `A S D F G H`).
+
+## Drums mode
+
+Tap **Keys / Drums** on the console to swap the keyboard for six drum pads (hi-hat, snare, kick, clap, tom, crash). The band's drummer steps back and copies your hits, leaving a quiet hi-hat to keep time. Two kits: Studio and 808.
 
 ## Project layout
 

@@ -11,15 +11,12 @@ import {
   CapsuleGeometry,
   CircleGeometry,
   Color,
-  ConeGeometry,
   CylinderGeometry,
   DoubleSide,
   Group,
-  InstancedMesh,
   Mesh,
   MeshBasicMaterial,
   MeshStandardMaterial,
-  PlaneGeometry,
   RingGeometry,
   SphereGeometry,
   SRGBColorSpace,
@@ -48,70 +45,8 @@ function solid(color: number, emissive = 0x000000, emissiveIntensity = 0): MeshS
   });
 }
 
-// ---------------------------------------------------------------- room
-
-export interface Room {
-  root: Group;
-  floorRing: Mesh<RingGeometry, MeshBasicMaterial>;
-  stageEdge: Mesh<BoxGeometry, MeshBasicMaterial>;
-  beams: Array<Mesh<ConeGeometry, MeshBasicMaterial>>;
-  wall: InstancedMesh;
-  wallBars: number;
-}
-
-export const STAGE_Z = -4.0;
-export const STAGE_TOP = 0.3;
-
-export function buildRoom(): Room {
-  const root = new Group();
-  root.name = 'Room';
-
-  const floor = new Mesh(new CircleGeometry(14, 64), solid(0x0b0812));
-  floor.rotation.x = -Math.PI / 2;
-  root.add(floor);
-
-  // A glowing ring around the player that pulses with the kick drum.
-  const floorRing = new Mesh(new RingGeometry(0.9, 0.96, 64), glowMaterial(0xff4fa0, 0.5));
-  floorRing.rotation.x = -Math.PI / 2;
-  floorRing.position.y = 0.005;
-  root.add(floorRing);
-
-  const stage = new Mesh(new BoxGeometry(6, STAGE_TOP, 2.8), solid(0x17111f));
-  stage.position.set(0, STAGE_TOP / 2, STAGE_Z);
-  root.add(stage);
-
-  const stageEdge = new Mesh(new BoxGeometry(6.02, 0.025, 0.025), glowMaterial(0xff4fa0, 0.9));
-  stageEdge.position.set(0, STAGE_TOP, STAGE_Z + 1.41);
-  root.add(stageEdge);
-
-  // Light beams sweeping down onto the band.
-  const beams: Room['beams'] = [];
-  const beamGeo = new ConeGeometry(0.75, 4.2, 24, 1, true);
-  beamGeo.translate(0, -2.1, 0); // pivot at the tip, so it swings like a spotlight
-  for (let i = 0; i < 4; i++) {
-    const beam = new Mesh(beamGeo, glowMaterial(0xffffff, 0.06));
-    beam.position.set(-2.4 + i * 1.6, 4.6, STAGE_Z - 0.4);
-    root.add(beam);
-    beams.push(beam);
-  }
-
-  // LED wall: one bar per frequency band of the music.
-  const wallBars = 28;
-  const wall = new InstancedMesh(
-    new BoxGeometry(0.17, 1, 0.04),
-    new MeshBasicMaterial({ color: 0xffffff, toneMapped: false }),
-    wallBars,
-  );
-  wall.position.set(0, STAGE_TOP, STAGE_Z - 1.5);
-  wall.frustumCulled = false;
-  root.add(wall);
-
-  const wallBack = new Mesh(new PlaneGeometry(6.4, 3.6), solid(0x0a0710));
-  wallBack.position.set(0, STAGE_TOP + 1.8, STAGE_Z - 1.55);
-  root.add(wallBack);
-
-  return { root, floorRing, stageEdge, beams, wall, wallBars };
-}
+// The venue (stage, truss, lights, screen) lives in venue.ts.
+export { STAGE_TOP, STAGE_Z } from './venue.js';
 
 // ---------------------------------------------------------------- band
 
@@ -214,6 +149,14 @@ function stringInstrument(neckLength: number, bodySize: number, color: number): 
   // Worn across the body, neck pointing up and to the player's left.
   g.rotation.set(0, 0, 1.15);
   return g;
+}
+
+export function buildSinger(): Musician {
+  const m = figure(false);
+  // Right hand up at the mic, left arm relaxed.
+  m.armR.rotation.set(-1.9, 0, -0.35);
+  m.armL.rotation.set(-0.25, 0, 0.25);
+  return m;
 }
 
 export function buildBassist(): Musician {

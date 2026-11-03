@@ -25,7 +25,10 @@ import {
   SkinnedMesh,
   Vector3,
 } from '@iwsdk/core';
+// Same module the SDK uses internally (vite dedupes three), for cloning skinned models.
+import { clone as cloneSkinned } from 'three/examples/jsm/utils/SkeletonUtils.js';
 import { buildInstrument, InstrumentKind } from './instruments.js';
+import { PerformerRig } from './performer.js';
 
 export interface MemberConfig {
   role: string;
@@ -42,6 +45,11 @@ export interface MemberConfig {
   offset?: [number, number, number];
   /** Extra turn around Y, in degrees. */
   turn?: number;
+  /**
+   * "singer": ignore the model's own animation and perform procedurally
+   * (mic at the mouth, sway, gestures, jaw). For rigs without music clips.
+   */
+  rig?: 'clip' | 'singer' | 'guitar' | 'bass' | 'drums';
   instrument?: {
     kind: InstrumentKind;
     /** Bone to attach to; a name fragment such as "Spine2" or "RightHand". */
@@ -89,7 +97,8 @@ function stripRootMotion(clip: AnimationClip): void {
 
 async function buildRig(cfg: MemberConfig): Promise<BandRig> {
   const gltf = await AssetManager.loadGLTF(BASE + cfg.model);
-  const model = gltf.scene;
+  // Loaded models are cached and shared: give every band member its own copy.
+  const model = cloneSkinned(gltf.scene);
   model.traverse((o) => {
     const mesh = o as Mesh;
     if (mesh.isMesh) {
@@ -113,6 +122,17 @@ async function buildRig(cfg: MemberConfig): Promise<BandRig> {
   const s = size.y > 0 ? height / size.y : 1;
   model.scale.setScalar(s);
   model.position.y = -box.min.y * s;
+
+  if (cfg.rig && cfg.rig !== 'clip') {
+    const perf = new PerformerRig(model, cfg.rig);
+    if (!perf.ok) throw new Error(`rig is missing the bones a procedural ${cfg.rig} needs`);
+    perf.root.name = `Band ${cfg.role}`;
+    if (cfg.offset) model.position.add(new Vector3(cfg.offset[0], cfg.offset[1], cfg.offset[2]));
+    if (cfg.turn) perf.root.rotation.y = (cfg.turn * Math.PI) / 180;
+    const holder = new Group();
+    holder.add(perf.root);
+    return { root: holder, update: (delta) => perf.update(delta) };
+  }
 
   const root = new Group();
   root.name = `Band ${cfg.role}`;

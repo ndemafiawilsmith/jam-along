@@ -574,8 +574,9 @@ export function buildRoom(): Room {
 
   // The singer's mic stand.
   const mic = micStand();
-  mic.position.copy(SPOTS.singer).add(new Vector3(0, 0, 0.35));
-  mic.rotation.y = Math.PI; // boom faces the singer
+  // Beside the singer, as if the mic was just lifted off it.
+  mic.position.copy(SPOTS.singer).add(new Vector3(0.55, 0, -0.1));
+  mic.rotation.y = Math.PI - 0.5;
   root.add(mic);
 
   return { root, floorRing, stageEdge, heads, screen, wash, ampLeds };

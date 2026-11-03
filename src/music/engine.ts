@@ -38,6 +38,15 @@ class HitLog {
     this.times[this.head] = t;
     this.head = (this.head + 1) % RING;
   }
+  /** Soonest hit that is scheduled but hasn't sounded yet (time > now), or -1. */
+  next(now: number): number {
+    let best = -1;
+    for (let i = 0; i < RING; i++) {
+      const t = this.times[i];
+      if (t > now && (best < 0 || t < best)) best = t;
+    }
+    return best;
+  }
   /** Most recent hit that has already sounded (time <= now). */
   last(now: number): number {
     let best = -1;
@@ -370,6 +379,13 @@ export class MusicEngine {
     if (!this.playing || !this.ctx) return 0;
     const bar = Math.floor(this.beatPosition() / 4);
     return Math.max(0, bar) % this.song.chords.length;
+  }
+
+  /** Seconds until the next scheduled hit of a type (Infinity if none is scheduled). */
+  until(type: HitType): number {
+    const now = this.now;
+    const t = this.logs.get(type)!.next(now);
+    return t < 0 ? Infinity : t - now;
   }
 
   /** Seconds since the last hit of a type (Infinity if none). */

@@ -69,6 +69,22 @@ export class MusicEngine {
   private nextStepTime = 0;
   private step = 0;
   private startTime = 0;
+  /** Built-in songs followed by the player's imported songs. */
+  songs: Song[] = [...SONGS];
+  /** Short message for the Now Playing card (importing, loading, errors). */
+  status: string | null = null;
+  private statusTimer: number | null = null;
+  /**
+   * Supplies decoded audio for an imported song. Set by the song library,
+   * which owns the stored files.
+   */
+  loadAudio: ((song: Song) => Promise<AudioBuffer>) | null = null;
+  private audioCache = new Map<string, AudioBuffer>();
+  private source: AudioBufferSourceNode | null = null;
+  private sourceStart = 0;
+  private loopIndex = 0;
+  private gridStep = 0;
+  private playToken = 0;
   private logs = new Map<HitType, HitLog>();
   private listeners = new Set<() => void>();
   notes: number[] = keyboardNotes(SONGS[0], KEY_COUNT);
@@ -78,7 +94,7 @@ export class MusicEngine {
   }
 
   get song(): Song {
-    return SONGS[this.songIndex];
+    return this.songs[this.songIndex];
   }
 
   get sound(): Sound {
@@ -101,6 +117,55 @@ export class MusicEngine {
 
   private emit(): void {
     this.listeners.forEach((fn) => fn());
+  }
+
+  /** Show a status message; it clears itself after `ms` if given. */
+  setStatus(message: string | null, ms = 0): void {
+    if (this.statusTimer !== null) window.clearTimeout(this.statusTimer);
+    this.statusTimer = null;
+    this.status = message;
+    if (message && ms > 0) {
+      this.statusTimer = window.setTimeout(() => this.setStatus(null), ms);
+    }
+    this.emit();
+  }
+
+  /** Add an imported song (with its decoded audio, if available). */
+  addSong(song: Song, audio?: AudioBuffer): number {
+    this.songs.push(song);
+    if (audio && song.imported) this.cacheAudio(song.imported.id, audio);
+    this.emit();
+    return this.songs.length - 1;
+  }
+
+  /** Remove an imported song by id (built-in songs can't be removed). */
+  removeSong(id: string): void {
+    const index = this.songs.findIndex((s) => s.imported?.id === id);
+    if (index < 0) return;
+    const current = this.song;
+    if (index === this.songIndex && this.playing) this.stop();
+    this.songs.splice(index, 1);
+    this.audioCache.delete(id);
+    const keep = this.songs.indexOf(current);
+    this.songIndex = keep >= 0 ? keep : Math.min(this.songIndex, this.songs.length - 1);
+    this.notes = keyboardNotes(this.song, KEY_COUNT);
+    this.emit();
+  }
+
+  /** Decode an audio file with the live audio context (full quality). */
+  async decode(data: ArrayBuffer): Promise<AudioBuffer> {
+    this.unlock();
+    return this.ctx!.decodeAudioData(data);
+  }
+
+  /** Keep decoded audio for at most two songs; full songs use a lot of memory. */
+  private cacheAudio(id: string, audio: AudioBuffer): void {
+    this.audioCache.delete(id);
+    this.audioCache.set(id, audio);
+    while (this.audioCache.size > 2) {
+      const oldest = this.audioCache.keys().next().value as string;
+      this.audioCache.delete(oldest);
+    }
   }
 
   /** Create or resume audio. Must run from a user gesture the first time. */
@@ -162,18 +227,69 @@ export class MusicEngine {
   play(): void {
     this.unlock();
     if (!this.ctx || this.playing) return;
+    const info = this.song.imported;
+    if (info && !this.audioCache.has(info.id)) {
+      void this.loadThenPlay();
+      return;
+    }
     this.playing = true;
     this.step = 0;
     this.nextStepTime = this.ctx.currentTime + 0.08;
     this.startTime = this.nextStepTime;
+    if (info) this.startImported(this.audioCache.get(info.id)!, this.nextStepTime);
     this.timer = window.setInterval(() => this.schedule(), TICK_MS);
     this.schedule();
     this.emit();
   }
 
+  /** Decode an imported song on demand, then start it if still wanted. */
+  private async loadThenPlay(): Promise<void> {
+    const song = this.song;
+    const info = song.imported;
+    if (!info || !this.loadAudio) return;
+    const token = ++this.playToken;
+    this.setStatus(`Loading ${song.name}…`);
+    try {
+      const audio = await this.loadAudio(song);
+      this.cacheAudio(info.id, audio);
+      if (token !== this.playToken || this.song !== song) return;
+      this.setStatus(null);
+      this.play();
+    } catch {
+      if (token === this.playToken) this.setStatus("Couldn't load that song", 4000);
+    }
+  }
+
+  private startImported(audio: AudioBuffer, when: number): void {
+    const ctx = this.ctx!;
+    const src = ctx.createBufferSource();
+    src.buffer = audio;
+    src.loop = true;
+    const gain = ctx.createGain();
+    gain.gain.value = 1.1; // the band bus is quieter than a mastered track needs
+    src.connect(gain).connect(this.bandBus);
+    src.start(when);
+    this.source = src;
+    this.sourceStart = when;
+    const info = this.song.imported!;
+    // Start the grid at the first beat that falls inside the audio.
+    this.loopIndex = 0;
+    this.gridStep = -Math.floor(info.beatOffset / this.stepDur);
+  }
+
   stop(): void {
+    this.playToken++;
     if (this.timer !== null) window.clearInterval(this.timer);
     this.timer = null;
+    if (this.source) {
+      try {
+        this.source.stop();
+      } catch {
+        /* already stopped */
+      }
+      this.source.disconnect();
+      this.source = null;
+    }
     this.playing = false;
     this.emit();
   }
@@ -181,7 +297,10 @@ export class MusicEngine {
   setSong(index: number): void {
     const wasPlaying = this.playing;
     if (wasPlaying) this.stop();
-    this.songIndex = (index + SONGS.length) % SONGS.length;
+    this.playToken++;
+    if (this.status?.startsWith('Loading')) this.setStatus(null);
+    const count = this.songs.length;
+    this.songIndex = ((index % count) + count) % count;
     this.notes = keyboardNotes(this.song, KEY_COUNT);
     if (wasPlaying) this.play();
     else this.emit();
@@ -216,26 +335,40 @@ export class MusicEngine {
     return 60 / this.song.bpm / 4;
   }
 
+  /**
+   * Beats since the start of the beat grid (fractional). For imported songs
+   * the grid comes from the detected tempo and first beat, and restarts each
+   * time the track loops.
+   */
+  private beatPosition(): number {
+    const ctx = this.ctx!;
+    const info = this.song.imported;
+    const beatDur = this.stepDur * 4;
+    if (info && this.source) {
+      const elapsed = Math.max(0, ctx.currentTime - this.sourceStart);
+      const pos = elapsed % info.duration;
+      return (pos - info.beatOffset) / beatDur;
+    }
+    return (ctx.currentTime - this.startTime) / beatDur;
+  }
+
   /** Position within the current beat, 0..1 (0 = on the beat). */
   beatPhase(): number {
     if (!this.playing || !this.ctx) return 0;
-    const beat = (this.ctx.currentTime - this.startTime) / (this.stepDur * 4);
+    const beat = this.beatPosition();
     return beat - Math.floor(beat);
   }
 
   /** Number of whole beats since the song started (0 when stopped). */
   beatIndex(): number {
     if (!this.playing || !this.ctx) return 0;
-    const beat = (this.ctx.currentTime - this.startTime) / (this.stepDur * 4);
-    return Math.max(0, Math.floor(beat));
+    return Math.max(0, Math.floor(this.beatPosition()));
   }
 
   /** Index of the current chord in the loop (changes once per bar). */
   barIndex(): number {
     if (!this.playing || !this.ctx) return 0;
-    const bar = Math.floor(
-      (this.ctx.currentTime - this.startTime) / (this.stepDur * 16),
-    );
+    const bar = Math.floor(this.beatPosition() / 4);
     return Math.max(0, bar) % this.song.chords.length;
   }
 
@@ -249,6 +382,10 @@ export class MusicEngine {
   private schedule(): void {
     const ctx = this.ctx;
     if (!ctx) return;
+    if (this.song.imported) {
+      this.scheduleImported(ctx);
+      return;
+    }
     while (this.nextStepTime < ctx.currentTime + LOOKAHEAD) {
       const s = this.step % 16;
       const swing = s % 2 === 1 ? this.song.swing * this.stepDur : 0;
@@ -256,6 +393,41 @@ export class MusicEngine {
       this.nextStepTime += this.stepDur;
       this.step++;
     }
+  }
+
+  /**
+   * Imported songs already contain the music, so nothing is synthesised here:
+   * we only log beat-grid "hits" so the band, lights and keys move in time.
+   */
+  private scheduleImported(ctx: AudioContext): void {
+    const info = this.song.imported!;
+    const sd = this.stepDur;
+    for (;;) {
+      const pos = info.beatOffset + this.gridStep * sd;
+      if (pos >= info.duration) {
+        // The track loops: restart the grid from its first beat.
+        this.loopIndex++;
+        this.gridStep = -Math.floor(info.beatOffset / sd);
+        continue;
+      }
+      const t = this.sourceStart + this.loopIndex * info.duration + pos;
+      if (t >= ctx.currentTime + LOOKAHEAD) break;
+      if (pos >= 0 && t >= ctx.currentTime - 0.05) {
+        this.logGridStep(((this.gridStep % 16) + 16) % 16, t);
+      }
+      this.gridStep++;
+    }
+  }
+
+  private logGridStep(s: number, t: number): void {
+    // In drums mode the band's drummer mirrors the player instead.
+    if (this.instrument !== 'Drums') {
+      if (s === 0 || s === 8) this.logs.get('kick')!.push(t);
+      if (s === 4 || s === 12) this.logs.get('snare')!.push(t);
+    }
+    if (s % 2 === 0) this.logs.get('hat')!.push(t);
+    if (s % 4 === 0) this.logs.get('bass')!.push(t);
+    if (s === 0) this.logs.get('chord')!.push(t);
   }
 
   private playStep(step: number, t: number): void {

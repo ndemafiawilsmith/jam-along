@@ -30,10 +30,23 @@ Desktop shortcuts: `Space` play/stop, `N` / `B` next/previous song, `M` change s
 
 Tap **Keys / Drums** on the console to swap the keyboard for six drum pads (hi-hat, snare, kick, clap, tom, crash). The band's drummer steps back and copies your hits, leaving a quiet hi-hat to keep time. Two kits: Studio and 808.
 
+## Import your own songs
+
+Before entering VR, press **Import your own song** on the welcome panel (or drop an
+audio file onto the page). MP3, M4A, WAV, OGG and FLAC all work, up to 60 MB.
+
+Jam Along detects the song's tempo, first beat and key in the background
+(usually in about a second), tunes the keyboard to that key, and syncs the band
+and lights to the beat. Files never leave your device: they're decoded and
+analysed locally and saved in the browser, so your last 8 songs are still there
+next time.
+
 ## Project layout
 
 - `src/music/songs.ts` – the three built-in songs (tempo, key, chords, drum patterns)
-- `src/music/engine.ts` – Web Audio engine: backing band + the player's instrument
+- `src/music/engine.ts` – Web Audio engine: backing band, imported songs, the player's instrument
+- `src/music/analyze.ts` – tempo, beat and key detection (runs in `analyze-worker.ts`)
+- `src/music/library.ts` – importing, browser storage and the file picker
 - `src/jam-system.ts` – keyboard, control buttons, fingertip and pinch input, sparks
 - `src/show-system.ts` – the band, light beams and the LED wall that reacts to the sound
 - `src/stage.ts` – all the 3D geometry

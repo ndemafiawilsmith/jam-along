@@ -9,6 +9,8 @@
   .body:dark { color: #dddfe3; }
   .button { justify-content: flex-start; margin-left: 22px; margin-right: 22px; margin-bottom: 22px; }
   .button-label { transform-translate-y: 1px; }
+  .hint { color: #5a5c63; font-size: 15px; line-height: 20px; margin-left: 26px; margin-right: 22px; margin-bottom: 18px; margin-top: -10px; }
+  .hint:dark { color: #a9abb3; }
 </style>
 <Panel class="panel-root">
   <div class="panel-content">
@@ -18,6 +20,13 @@
     <div class="body">2. Tap the keys, or switch to Drums.</div>
     <div class="body">Every key fits the song, so just play.</div>
   </div>
+  <Button id="import-button" class="button" variant="secondary">
+    <ButtonIcon>
+      <Music></Music>
+    </ButtonIcon>
+    <ButtonLabel class="button-label">Import your own song</ButtonLabel>
+  </Button>
+  <div id="import-hint" class="hint">MP3, M4A or WAV, or drop a file here</div>
   <Button id="xr-button" class="button">
     <ButtonIcon>
       <RectangleGoggles></RectangleGoggles>

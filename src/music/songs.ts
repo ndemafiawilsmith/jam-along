@@ -15,6 +15,16 @@ export interface Chord {
   tones: number[];
 }
 
+/** Extra data for a song the player imported from their own files. */
+export interface ImportedInfo {
+  /** Stable id used for storage. */
+  id: string;
+  /** Length of the audio in seconds. */
+  duration: number;
+  /** Seconds from the start of the audio to the first detected beat. */
+  beatOffset: number;
+}
+
 export interface Song {
   name: string;
   vibe: string;
@@ -35,6 +45,8 @@ export interface Song {
   bass: Array<[step: number, interval: number]>;
   /** Hue (0..1) used to tint lights and the band. */
   hue: number;
+  /** Present only for imported songs, which play an audio file. */
+  imported?: ImportedInfo;
 }
 
 const MAJ = [0, 4, 7];
@@ -158,4 +170,45 @@ export function noteName(midi: number): string {
 
 export function keyName(song: Song): string {
   return `${noteName(song.rootMidi)} ${song.mode}`;
+}
+
+/** Pitch class of a song's key, 0 = C. */
+export function keyRootOf(song: Song): number {
+  return ((song.rootMidi % 12) + 12) % 12;
+}
+
+/**
+ * Build a Song for an imported audio file from its analysis. The keyboard only
+ * needs the key; the band follows the detected beat grid.
+ */
+export function makeImportedSong(opts: {
+  id: string;
+  name: string;
+  duration: number;
+  bpm: number;
+  beatOffset: number;
+  keyRoot: number;
+  mode: Mode;
+}): Song {
+  let hash = 0;
+  for (let i = 0; i < opts.name.length; i++) hash = (hash * 31 + opts.name.charCodeAt(i)) >>> 0;
+  return {
+    name: opts.name,
+    vibe: 'Your music',
+    bpm: opts.bpm,
+    // Bass-octave root between C2 (36) and B2 (47).
+    rootMidi: 36 + (((opts.keyRoot % 12) + 12) % 12),
+    mode: opts.mode,
+    swing: 0,
+    // No chord chart for imported songs: highlight the key's home chord.
+    chords: [{ root: 0, tones: opts.mode === 'major' ? MAJ : MIN }],
+    kick: [],
+    snare: [],
+    clap: [],
+    rim: [],
+    hat: [],
+    bass: [],
+    hue: (hash % 1000) / 1000,
+    imported: { id: opts.id, duration: opts.duration, beatOffset: opts.beatOffset },
+  };
 }

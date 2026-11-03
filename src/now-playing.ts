@@ -21,7 +21,7 @@ import {
   SRGBColorSpace,
 } from '@iwsdk/core';
 import { music } from './music/engine.js';
-import { keyName, SONGS } from './music/songs.js';
+import { keyName } from './music/songs.js';
 import {
   ACTION_NEXT_SONG,
   ACTION_PLAY,
@@ -72,6 +72,19 @@ function labelPlane(w: number, h: number, texture: CanvasTexture): Mesh {
     new MeshBasicMaterial({ map: texture, transparent: true, toneMapped: false }),
   );
   return m;
+}
+
+/** Shorten `text` with an ellipsis so it fits `maxW` at the current font. */
+function fit(ctx: CanvasRenderingContext2D, text: string, maxW: number): string {
+  if (ctx.measureText(text).width <= maxW) return text;
+  let lo = 0;
+  let hi = text.length;
+  while (lo < hi) {
+    const mid = Math.ceil((lo + hi) / 2);
+    if (ctx.measureText(text.slice(0, mid).trimEnd() + '…').width <= maxW) lo = mid;
+    else hi = mid - 1;
+  }
+  return text.slice(0, lo).trimEnd() + '…';
 }
 
 function hsl(h: number, s: number, l: number, a = 1): string {
@@ -327,22 +340,49 @@ export class NowPlaying {
     ctx.textAlign = 'left';
     ctx.textBaseline = 'alphabetic';
 
-    ctx.fillStyle = music.playing ? hsl(hue, 1, 0.68) : 'rgba(255,255,255,0.6)';
+    // Status line: import / loading messages take priority, in amber.
     ctx.font = '800 38px system-ui, sans-serif';
-    ctx.fillText(music.playing ? 'NOW PLAYING' : 'READY TO PLAY', tx, 92, maxW);
+    if (music.status) {
+      ctx.fillStyle = '#ffb860';
+      ctx.fillText(fit(ctx, music.status.toUpperCase(), maxW), tx, 92);
+    } else {
+      ctx.fillStyle = music.playing ? hsl(hue, 1, 0.68) : 'rgba(255,255,255,0.6)';
+      ctx.fillText(music.playing ? 'NOW PLAYING' : 'READY TO PLAY', tx, 92, maxW);
+    }
 
     ctx.fillStyle = '#ffffff';
-    ctx.font = '800 92px system-ui, sans-serif';
-    ctx.fillText(song.name, tx, 194, maxW);
+    // Long titles step down in size before being shortened.
+    let titleSize = 92;
+    ctx.font = `800 ${titleSize}px system-ui, sans-serif`;
+    while (titleSize > 64 && ctx.measureText(song.name).width > maxW) {
+      titleSize -= 8;
+      ctx.font = `800 ${titleSize}px system-ui, sans-serif`;
+    }
+    ctx.fillText(fit(ctx, song.name, maxW), tx, 194);
 
     ctx.fillStyle = 'rgba(255,255,255,0.82)';
     ctx.font = '500 44px system-ui, sans-serif';
-    ctx.fillText(`${song.vibe} · ${keyName(song)} · ${song.bpm} BPM`, tx, 262, maxW);
+    ctx.fillText(
+      fit(
+        ctx,
+        // Imported songs already carry a badge, so skip the style label.
+        `${song.imported ? '' : `${song.vibe} · `}${keyName(song)} · ${Math.round(song.bpm)} BPM`,
+        maxW,
+      ),
+      tx,
+      262,
+    );
 
     ctx.fillStyle = 'rgba(255,255,255,0.5)';
     ctx.font = '600 34px system-ui, sans-serif';
     ctx.textAlign = 'right';
-    ctx.fillText(`Song ${music.songIndex + 1} of ${SONGS.length}`, w - 34, h - 44);
+    ctx.fillText(`Song ${music.songIndex + 1} of ${music.songs.length}`, w - 34, h - 44);
+    if (song.imported) {
+      ctx.textAlign = 'left';
+      ctx.fillStyle = 'rgba(255,255,255,0.85)';
+      ctx.font = '700 30px system-ui, sans-serif';
+      ctx.fillText('★ IMPORTED', ax + 22, ay + art - 22);
+    }
 
     texture.needsUpdate = true;
   }

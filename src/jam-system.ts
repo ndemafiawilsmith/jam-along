@@ -24,6 +24,7 @@ import {
   RayInteractable,
   SphereGeometry,
   Vector3,
+  VisibilityState,
 } from '@iwsdk/core';
 import { KEY_COUNT, music, PADS } from './music/engine.js';
 import { NowPlaying } from './now-playing.js';
@@ -33,6 +34,7 @@ import {
   buildPad,
   buildPadBase,
   buildSpark,
+  glowMaterial,
   KEY_DEPTH,
   KEY_HEIGHT,
   KEY_PITCH,
@@ -111,6 +113,8 @@ export class JamSystem extends createSystem({
   private nowPlaying = new NowPlaying();
   private targets: PokeTarget[] = [];
   private sparks: Spark[] = [];
+  /** Soft glow on each index fingertip, so players see where they'll tap. */
+  private tipGlows: Mesh<SphereGeometry, MeshBasicMaterial>[] = [];
   private nextSpark = 0;
 
   private tmpInv = new Matrix4();
@@ -127,6 +131,7 @@ export class JamSystem extends createSystem({
     this.buildPads();
     this.buildPanel();
     this.buildSparks();
+    this.buildTipGlows();
     this.updateChordTones();
     this.applyInstrument();
 
@@ -276,6 +281,18 @@ export class JamSystem extends createSystem({
     }
   }
 
+  private buildTipGlows(): void {
+    const holder = new Group();
+    holder.name = 'Fingertip Glows';
+    for (let h = 0; h < 2; h++) {
+      const glow = new Mesh(new SphereGeometry(0.009, 16, 12), glowMaterial(0xffc2e0, 0.85));
+      glow.visible = false;
+      holder.add(glow);
+      this.tipGlows.push(glow);
+    }
+    this.world.createTransformEntity(holder, { persistent: true });
+  }
+
   private buildSparks(): void {
     const holder = new Group();
     holder.name = 'Sparks';
@@ -381,6 +398,17 @@ export class JamSystem extends createSystem({
     }
 
     this.pollFingertips(delta);
+
+    // Fingertip glows follow the hands in VR and brighten on each tap.
+    const inXR = this.world.visibilityState.peek() !== VisibilityState.NonImmersive;
+    const tap = Math.exp(-music.since('player') * 8);
+    for (let h = 0; h < 2; h++) {
+      const glow = this.tipGlows[h];
+      glow.visible = inXR && this.tipPos[h].lengthSq() > 0.0001;
+      glow.position.copy(this.tipPos[h]);
+      glow.scale.setScalar(1 + tap * 0.6);
+      glow.material.opacity = 0.55 + tap * 0.45;
+    }
 
     // Keys: sink and flash when hit; chord tones breathe on the beat.
     const beat = music.beatPhase();

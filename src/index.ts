@@ -1,6 +1,7 @@
 import { World } from '@iwsdk/core';
 import projectOptions from 'virtual:iwsdk-project';
 import { JamSystem } from './jam-system.js';
+import { music } from './music/engine.js';
 import { loadSavedSongs } from './music/library.js';
 import { PanelSystem } from './panel.js';
 import { ShowSystem } from './show-system.js';
@@ -17,3 +18,8 @@ World.create(
   world.registerSystem(JamSystem);
   world.registerSystem(PanelSystem);
 });
+
+// Development only: lets scripted tests and video capture read the app state.
+if (import.meta.env.DEV) {
+  (window as unknown as { __jam: unknown }).__jam = { music };
+}

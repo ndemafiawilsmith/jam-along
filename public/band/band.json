@@ -1,5 +1,8 @@
 {
   "members": [
-    { "role": "singer", "model": "nathan.glb", "rig": "singer", "height": 1.8 }
+    { "role": "singer", "model": "nathan.glb", "rig": "singer", "height": 1.8 },
+    { "role": "guitarist", "model": "nathan.glb", "rig": "guitar", "height": 1.8 },
+    { "role": "bassist", "model": "nathan.glb", "rig": "bass", "height": 1.8 },
+    { "role": "drummer", "model": "nathan.glb", "rig": "drums", "height": 1.8 }
   ]
 }
